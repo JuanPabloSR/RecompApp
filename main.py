@@ -7,6 +7,12 @@ import logging
 import traceback
 from datetime import datetime
 
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 # Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -85,7 +91,7 @@ class RecompApp(ctk.CTk):
 
             self._build_tab_datos()
             self._build_tab_gestion()
-            self._build_tab_placeholder(self.tab_graficos, "Módulo de Gráficos (Próximamente)")
+            self._build_tab_graficos()
             self._build_tab_placeholder(self.tab_ml, "Módulo de Machine Learning (Próximamente)")
 
             logger.info("Interfaz inicializada correctamente.")
@@ -176,6 +182,7 @@ class RecompApp(ctk.CTk):
                 text_color="#4caf50",
             )
             self.update_treeview()
+            self.actualizar_dropdowns_graficos()
 
         except Exception as ex:
             logger.error(f"Error al cargar archivo: {ex}")
@@ -459,6 +466,191 @@ class RecompApp(ctk.CTk):
             logger.error(f"Error añadiendo registro: {e}")
             self._log_to_console(f"ERROR: {e}")
             messagebox.showerror("Error", f"No se pudo añadir el registro:\n{e}")
+    # ──────────────────────────────────────────────
+    # Tab 3 — Gráficos con Matplotlib
+    # ──────────────────────────────────────────────
+    def _build_tab_graficos(self):
+        """Construye la pestaña de Gráficos con dos paneles."""
+
+        main_frame = ctk.CTkFrame(self.tab_graficos, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        main_frame.columnconfigure(0, weight=0)   # panel controles (fijo)
+        main_frame.columnconfigure(1, weight=1)    # panel canvas (expandible)
+        main_frame.rowconfigure(0, weight=1)
+
+        # ═══════════ PANEL IZQUIERDO — Controles ═══════════
+        ctrl_panel = ctk.CTkFrame(main_frame, width=240, corner_radius=10)
+        ctrl_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=0)
+        ctrl_panel.grid_propagate(False)
+
+        ctk.CTkLabel(
+            ctrl_panel, text="🎛️ Controles",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(pady=(12, 10))
+
+        # Variable X
+        ctk.CTkLabel(
+            ctrl_panel, text="Variable X", text_color="#aaaaaa",
+            font=ctk.CTkFont(size=11),
+        ).pack(padx=15, anchor="w")
+        self.opt_var_x = ctk.CTkOptionMenu(
+            ctrl_panel, values=["-- Cargar datos --"],
+            width=210, fg_color="#2a2a3e", button_color="#0f3460",
+            button_hover_color="#1a5276",
+        )
+        self.opt_var_x.pack(padx=15, pady=(2, 8))
+
+        # Variable Y
+        ctk.CTkLabel(
+            ctrl_panel, text="Variable Y", text_color="#aaaaaa",
+            font=ctk.CTkFont(size=11),
+        ).pack(padx=15, anchor="w")
+        self.opt_var_y = ctk.CTkOptionMenu(
+            ctrl_panel, values=["-- Cargar datos --"],
+            width=210, fg_color="#2a2a3e", button_color="#0f3460",
+            button_hover_color="#1a5276",
+        )
+        self.opt_var_y.pack(padx=15, pady=(2, 8))
+
+        # Tipo de gráfico
+        ctk.CTkLabel(
+            ctrl_panel, text="Tipo de Gráfico", text_color="#aaaaaa",
+            font=ctk.CTkFont(size=11),
+        ).pack(padx=15, anchor="w")
+        self.opt_chart_type = ctk.CTkOptionMenu(
+            ctrl_panel,
+            values=["Dispersión (Scatter)", "Barras (Bar)", "Pastel (Pie)"],
+            width=210, fg_color="#2a2a3e", button_color="#0f3460",
+            button_hover_color="#1a5276",
+        )
+        self.opt_chart_type.pack(padx=15, pady=(2, 15))
+
+        # Botón generar
+        ctk.CTkButton(
+            ctrl_panel, text="📊 Generar Gráfico",
+            command=self._generate_chart,
+            width=210, height=38, corner_radius=8,
+            fg_color="#2e7d32", hover_color="#388e3c",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(pady=(0, 15))
+
+        # ═══════════ PANEL DERECHO — Canvas ═══════════
+        canvas_panel = ctk.CTkFrame(main_frame, corner_radius=10)
+        canvas_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=0)
+
+        ctk.CTkLabel(
+            canvas_panel, text="📈 Visualización",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(pady=(12, 5))
+
+        # Matplotlib Figure + Canvas
+        plt.style.use("dark_background")
+        self.fig = Figure(figsize=(7, 5), dpi=100, facecolor="#2b2b3c")
+        self.ax = self.fig.add_subplot(111)
+        self.ax.set_facecolor("#1e1e2e")
+        self.ax.text(
+            0.5, 0.5, "Seleccione variables y genere un gráfico",
+            ha="center", va="center", fontsize=13, color="#888888",
+            transform=self.ax.transAxes,
+        )
+
+        self.canvas_widget = FigureCanvasTkAgg(self.fig, master=canvas_panel)
+        self.canvas_widget.draw()
+        self.canvas_widget.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+    def actualizar_dropdowns_graficos(self):
+        """Actualiza los OptionMenus X e Y con las columnas del DataFrame."""
+        if self.df is None or self.df.empty:
+            return
+        cols = list(self.df.columns)
+        self.opt_var_x.configure(values=cols)
+        self.opt_var_y.configure(values=cols)
+        # Seleccionar defaults razonables
+        if len(cols) >= 2:
+            self.opt_var_x.set(cols[0])
+            self.opt_var_y.set(cols[1])
+        elif len(cols) == 1:
+            self.opt_var_x.set(cols[0])
+            self.opt_var_y.set(cols[0])
+
+    def _generate_chart(self):
+        """Genera el gráfico según las selecciones del usuario."""
+        if not self._check_df_loaded():
+            return
+
+        col_x = self.opt_var_x.get()
+        col_y = self.opt_var_y.get()
+        chart_type = self.opt_chart_type.get()
+
+        # Validar que las columnas existan
+        if col_x not in self.df.columns:
+            messagebox.showerror("Error", f"La columna '{col_x}' no existe en el dataset.")
+            return
+
+        try:
+            # Limpiar figura
+            self.fig.clear()
+            ax = self.fig.add_subplot(111)
+            ax.set_facecolor("#1e1e2e")
+
+            if chart_type == "Dispersión (Scatter)":
+                # Validar numéricas
+                if not pd.api.types.is_numeric_dtype(self.df[col_x]):
+                    messagebox.showerror("Error", f"'{col_x}' no es numérica. Seleccione una columna numérica.")
+                    return
+                if col_y not in self.df.columns or not pd.api.types.is_numeric_dtype(self.df[col_y]):
+                    messagebox.showerror("Error", f"'{col_y}' no es numérica. Seleccione una columna numérica.")
+                    return
+
+                ax.scatter(
+                    self.df[col_x], self.df[col_y],
+                    c="#42a5f5", edgecolors="#1565c0", alpha=0.8, s=50,
+                )
+                ax.set_xlabel(col_x, color="#cccccc", fontsize=11)
+                ax.set_ylabel(col_y, color="#cccccc", fontsize=11)
+                ax.set_title(f"{col_y} vs {col_x}", color="#e0e0e0", fontsize=13, weight="bold")
+
+            elif chart_type == "Barras (Bar)":
+                if not pd.api.types.is_numeric_dtype(self.df[col_y]):
+                    messagebox.showerror("Error", f"'{col_y}' no es numérica. Seleccione una columna numérica para Y.")
+                    return
+
+                data = self.df.head(30)  # Limitar a 30 barras para legibilidad
+                bars = ax.bar(
+                    data[col_x].astype(str), data[col_y],
+                    color="#42a5f5", edgecolor="#1565c0", alpha=0.85,
+                )
+                ax.set_xlabel(col_x, color="#cccccc", fontsize=11)
+                ax.set_ylabel(col_y, color="#cccccc", fontsize=11)
+                ax.set_title(f"{col_y} por {col_x} (primeros 30)", color="#e0e0e0", fontsize=13, weight="bold")
+                plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+
+            elif chart_type == "Pastel (Pie)":
+                # Para Pie solo se usa la variable Y (numérica) agrupada por X
+                if not pd.api.types.is_numeric_dtype(self.df[col_y]):
+                    messagebox.showerror("Error", f"'{col_y}' no es numérica. Seleccione una columna numérica para Y.")
+                    return
+
+                pie_data = self.df.groupby(col_x)[col_y].sum().nlargest(8)
+                colors_pie = ["#42a5f5", "#66bb6a", "#ffa726", "#ef5350",
+                              "#ab47bc", "#26c6da", "#8d6e63", "#78909c"]
+                ax.pie(
+                    pie_data.values,
+                    labels=pie_data.index.astype(str),
+                    autopct="%1.1f%%",
+                    colors=colors_pie[:len(pie_data)],
+                    textprops={"color": "#e0e0e0", "fontsize": 9},
+                )
+                ax.set_title(f"{col_y} por {col_x} (Top 8)", color="#e0e0e0", fontsize=13, weight="bold")
+
+            self.fig.tight_layout()
+            self.canvas_widget.draw()
+            logger.info(f"Gráfico generado: {chart_type} — X={col_x}, Y={col_y}")
+
+        except Exception as e:
+            logger.error(f"Error generando gráfico: {e}")
+            logger.error(traceback.format_exc())
+            messagebox.showerror("Error", f"No se pudo generar el gráfico:\n{e}")
 
 
 # ──────────────────────────────────────────────────
