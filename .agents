@@ -1,0 +1,43 @@
+# RECOMP MASTER PRO // Agent Rules & Guidelines
+
+Este archivo sirve como documentación central y reglas de comportamiento para asistentes de IA que interactúen con este proyecto. Lee y aplica estas reglas SIEMPRE antes de modificar el código o ejecutar comandos en este repositorio.
+
+## 1. Entorno del Sistema
+- **Sistema Operativo:** Windows.
+- **Terminal:** PowerShell.
+- **Regla Crítica de Comandos:** NUNCA uses `&&` para encadenar comandos en la terminal (ya que no es válido en el PowerShell de Windows por defecto). Usa el punto y coma `;` en su lugar.
+  - *Incorrecto:* `git add . && git commit -m "fix"`
+  - *Correcto:* `git add .; git commit -m "fix"`
+
+## 2. Convenciones de Código y Buenas Prácticas
+- **Lenguaje:** Python 3.10+.
+- **Estilo y Formato:** Usa `black` para el formateo de código. No dejes líneas muy largas (límite de 88 a 127 caracteres) y asegúrate de que la indentación cumpla con el estándar PEP 8 antes de hacer un commit (de lo contrario, GitHub Actions fallará).
+- **Control de Versiones:**
+  - Los commits deben describir claramente el cambio (ej. `feat: agregar nuevo modelo ML`, `fix: corregir cálculo de IQR`).
+  - Antes de realizar una release, asegúrate de que el código pasa el formateo de `black`.
+
+## 3. Arquitectura y Dependencias
+- **Librerías Clave:** `customtkinter` para la interfaz gráfica, `pandas` para el manejo de datos, `scikit-learn` para el Machine Learning engine, `matplotlib` para visualización.
+- **Entorno Virtual:** Siempre asegúrate de indicar que los paquetes deben instalarse/actualizarse dentro del entorno virtual (`venv/`).
+
+## 4. Especificaciones de UI/UX (Fallout Design System)
+Esta aplicación sigue una estética **RETRO TERMINAL (Estilo Fallout)** estricta. Al agregar nuevos componentes de la interfaz de usuario, DEBEN seguir esta paleta y convenciones:
+- **Tema:** Oscuro (`Set_appearance_mode("dark")`).
+- **Constantes de Color Globales:**
+  - Fondo Principal (`FO_BG`): `#050a05` (Verdoso muy oscuro/negro).
+  - Acento Principal (`FO_GREEN`): `#4af626` (Verde fósforo brillante).
+  - Bordes Tristes/Inactivo (`FO_DIM`): `#1a3a1a`.
+  - Texto Inactivo Visible (`FO_MID`): `#0d6b06`.
+  - Hover (`FO_HOVER`): `#16a308`.
+  - Negro Absoluto (`FO_BLACK`): `#000000`.
+- **Tipografía:**
+  - `Consolas` en toda la aplicación. No uses fuentes genéricas como Arial o Helvetica.
+- **Estilo de Elementos:**
+  - Los Botones, Entradas (Entries) y Frames (Cards) deben tener fondo oscuro (`FO_BLACK` o `FO_BG`) y bordes verdes brillantes (`FO_GREEN`), con texto color verde fósforo.
+  - La tabla de datos (`Treeview`) fue personalizada de forma especial. Los nuevos elementos visuales no deben desentonar con esta estética "monocromática de fósforo verde".
+  - **Animaciones:** Usa el efecto de "Typewriter" (máquina de escribir) en la consola de eventos (`self._log_to_console()`) para mantener la inmersión del usuario.
+
+## 5. Instrucciones Generales para la IA
+- **Ser Conciso:** Da respuestas directas. Evita explicaciones innecesariamente largas a menos que se te pida enseñar un concepto.
+- **Priorizar Código Seguro:** Antes de modificar `main.py` de manera extensiva, explica brevemente qué vas a hacer.
+- **Manejo de Errores:** Todos los procesos de datos (carga de CSV, transformaciones) y cálculos ML deben estar envueltos en bloques `try...except` con el uso adecuado de `logging`, tal como está estructurado el proyecto actualmente.
