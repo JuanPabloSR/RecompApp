@@ -16,12 +16,12 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.svm import SVR
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neighbors import KNeighborsRegressor
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, precision_score, recall_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 
 # ─── Logging ─────────────────────────────────────
@@ -33,6 +33,7 @@ EXPECTED_COLUMNS = ["Date", "Protein", "Fats", "Sat Fats", "Carbs", "Sugars", "C
 MAX_ROWS_DISPLAY = 100
 ML_MODELS = {
     "Regresión Lineal": LinearRegression,
+    "Regresión Logística": LogisticRegression,
     "SVM": SVR,
     "Árbol de Decisión": DecisionTreeRegressor,
     "Random Forest": RandomForestRegressor,
@@ -744,15 +745,25 @@ class RecompApp(ctk.CTk):
 
         self._fo_label(p1, "Predictoras (X):", 10).pack(padx=12, anchor="w", pady=(4, 2))
         self.ml_checkbox_frame = ctk.CTkScrollableFrame(
-            p1, fg_color=FO_BLACK, corner_radius=4, height=160,
+            p1, fg_color=FO_BLACK, corner_radius=4, height=100,
             border_width=1, border_color=FO_GREEN,
         )
-        self.ml_checkbox_frame.pack(fill="x", padx=12, pady=(0, 10))
+        self.ml_checkbox_frame.pack(fill="x", padx=12, pady=(0, 5))
         self.ml_checkboxes: dict[str, ctk.CTkCheckBox] = {}
         self.ml_checkbox_vars: dict[str, ctk.BooleanVar] = {}
 
+        self._fo_label(p1, "Limpieza Outliers (IQR k):", 10).pack(padx=12, anchor="w")
+        self.entry_iqr_k = self._fo_entry(p1, placeholder="1.5", width=230, height=26)
+        self.entry_iqr_k.pack(padx=12, pady=(2, 6))
+        self.entry_iqr_k.insert(0, "1.5")
+
+        self._fo_label(p1, "Umbral Grasas % (Lim: Logística):", 10).pack(padx=12, anchor="w")
+        self.entry_umbral = self._fo_entry(p1, placeholder="25.0", width=230, height=26)
+        self.entry_umbral.pack(padx=12, pady=(2, 10))
+        self.entry_umbral.insert(0, "25.0")
+
         self._fo_btn(p1, "> ENTRENAR MODELO", self.entrenar_modelo,
-                     width=230, height=36).pack(pady=(5, 15))
+                     width=230, height=36).pack(pady=(0, 15))
 
         # ── Panel 2: Inferencia ──
         p2 = self._fo_card(mf)
@@ -790,24 +801,27 @@ class RecompApp(ctk.CTk):
 
         r1 = ctk.CTkFrame(met, fg_color="transparent")
         r1.pack(fill="x", padx=10, pady=(8, 2))
-        self._fo_label(r1, "MSE:", 12).pack(side="left")
-        self.lbl_mse = ctk.CTkLabel(r1, text="---", text_color=FO_GREEN,
+        self.lbl_desc_m1 = self._fo_label(r1, "MSE:", 12)
+        self.lbl_desc_m1.pack(side="left")
+        self.lbl_val_m1 = ctk.CTkLabel(r1, text="---", text_color=FO_GREEN,
                                     font=ctk.CTkFont(family=FO_FONT, size=12))
-        self.lbl_mse.pack(side="left", padx=(8, 0))
+        self.lbl_val_m1.pack(side="left", padx=(8, 0))
 
         r2 = ctk.CTkFrame(met, fg_color="transparent")
         r2.pack(fill="x", padx=10, pady=(2, 2))
-        self._fo_label(r2, "R²:", 12).pack(side="left")
-        self.lbl_r2 = ctk.CTkLabel(r2, text="---", text_color=FO_GREEN,
+        self.lbl_desc_m2 = self._fo_label(r2, "R²:", 12)
+        self.lbl_desc_m2.pack(side="left")
+        self.lbl_val_m2 = ctk.CTkLabel(r2, text="---", text_color=FO_GREEN,
                                    font=ctk.CTkFont(family=FO_FONT, size=12))
-        self.lbl_r2.pack(side="left", padx=(8, 0))
+        self.lbl_val_m2.pack(side="left", padx=(8, 0))
 
         r3 = ctk.CTkFrame(met, fg_color="transparent")
         r3.pack(fill="x", padx=10, pady=(2, 2))
-        self._fo_label(r3, "CV(5):", 12).pack(side="left")
-        self.lbl_cv = ctk.CTkLabel(r3, text="---", text_color=FO_GREEN,
+        self.lbl_desc_m3 = self._fo_label(r3, "CV(5):", 12)
+        self.lbl_desc_m3.pack(side="left")
+        self.lbl_val_m3 = ctk.CTkLabel(r3, text="---", text_color=FO_GREEN,
                                    font=ctk.CTkFont(family=FO_FONT, size=12))
-        self.lbl_cv.pack(side="left", padx=(8, 0))
+        self.lbl_val_m3.pack(side="left", padx=(8, 0))
 
         r4 = ctk.CTkFrame(met, fg_color="transparent")
         r4.pack(fill="x", padx=10, pady=(2, 8))
@@ -866,72 +880,285 @@ class RecompApp(ctk.CTk):
         try:
             total_rows = self.df.shape[0]
             df_c = self.df[sx + [tc]].dropna()
+
+            # OUTLIER REMOVAL (IQR)
+            try:
+                k_iqr = float(self.entry_iqr_k.get().strip())
+            except ValueError:
+                k_iqr = 1.5
+                self._log_to_console("AVISO: IQR k inválido. Usando 1.5 por defecto.")
+
+            if k_iqr > 0:
+                before_iqr = df_c.shape[0]
+                for col in sx + [tc]:
+                    Q1 = df_c[col].quantile(0.25)
+                    Q3 = df_c[col].quantile(0.75)
+                    IQR = Q3 - Q1
+                    lb = Q1 - k_iqr * IQR
+                    ub = Q3 + k_iqr * IQR
+                    df_c = df_c[(df_c[col] >= lb) & (df_c[col] <= ub)]
+                outliers_dropped = before_iqr - df_c.shape[0]
+                if outliers_dropped > 0:
+                    self._log_to_console(f"LIMPIEZA IQR (k={k_iqr}): {outliers_dropped} outliers eliminados.")
+
             rows_used = df_c.shape[0]
             rows_dropped = total_rows - rows_used
 
             if rows_used < 10:
                 messagebox.showerror("DATOS INSUFICIENTES", f"Solo {rows_used} filas válidas (min 10)."); return
 
-            # Hallazgo 2: Advertir si se eliminaron muchas filas por nulos
+            # Advertir nulos/outliers eliminados sumados
             if rows_dropped > 0:
                 pct_dropped = (rows_dropped / total_rows) * 100
-                warn_msg = f"AVISO: {rows_dropped} filas eliminadas por nulos ({pct_dropped:.1f}%). Usando {rows_used}/{total_rows}."
-                self._log_to_console(warn_msg)
+                self._log_to_console(f"AVISO: {rows_dropped} filas eliminadas (nulos/outliers) ({pct_dropped:.1f}%). Usando {rows_used}/{total_rows}.")
                 if pct_dropped > 20:
-                    self._log_to_console("ADVERTENCIA: >20% de datos descartados. Resultados poco confiables.")
+                    self._log_to_console("ADVERTENCIA: >20% de datos descartados.")
 
             X, y = df_c[sx].values, df_c[tc].values
-            X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+            is_classif = (mn == "Regresión Logística")
 
-            # Hallazgo 1: StandardScaler para modelos sensibles a escala
-            needs_scaling = mn in ("SVM", "KNN")
+            if is_classif:
+                try:
+                    umbral = float(self.entry_umbral.get().strip())
+                except ValueError:
+                    umbral = 25.0
+                    self._log_to_console("AVISO: Umbral inválido. Usando 25.0%.")
+                y = np.where(y > umbral, 1, 0)
+                self._log_to_console(f"CLASIFICACIÓN: Target > {umbral} asignado clase 1 (Alto).")
+
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+
+            needs_scaling = mn in ("SVM", "KNN", "Regresión Logística")
             if needs_scaling:
                 scaler = StandardScaler()
                 X_tr = scaler.fit_transform(X_tr)
                 X_te = scaler.transform(X_te)
                 self.scaler_actual = scaler
-                self._log_to_console(f"SCALER aplicado (StandardScaler) — modelo {mn} requiere normalización.")
+                self._log_to_console(f"SCALER aplicado (StandardScaler) — modelo {mn}.")
             else:
                 self.scaler_actual = None
 
-            model = ML_MODELS[mn](); model.fit(X_tr, y_tr)
-            y_p = model.predict(X_te)
-            mse, r2 = mean_squared_error(y_te, y_p), r2_score(y_te, y_p)
-
-            # Hallazgo 6: Cross-validation (5-fold)
-            X_all, y_all = df_c[sx].values, df_c[tc].values
-            if needs_scaling:
-                X_all_cv = StandardScaler().fit_transform(X_all)
-            else:
-                X_all_cv = X_all
-            cv_model = ML_MODELS[mn]()
-            cv_scores = cross_val_score(cv_model, X_all_cv, y_all, cv=5, scoring="r2")
-            cv_mean = cv_scores.mean()
+            model = ML_MODELS[mn]()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                model.fit(X_tr, y_tr)
+                y_p = model.predict(X_te)
 
             self.modelo_actual = model; self.columnas_x_entrenadas = sx
-            self.lbl_mse.configure(text=f"{mse:.4f}")
-            self.lbl_r2.configure(text=f"{r2:.4f}")
-            self.lbl_cv.configure(text=f"{cv_mean:.4f} (±{cv_scores.std():.3f})")
             self.lbl_rows_used.configure(text=f"{rows_used}/{total_rows}")
 
-            # Chart
+            if is_classif:
+                acc = accuracy_score(y_te, y_p)
+                prec = precision_score(y_te, y_p, zero_division=0)
+                rec = recall_score(y_te, y_p, zero_division=0)
+                
+                self.lbl_desc_m1.configure(text="Accuracy:")
+                self.lbl_val_m1.configure(text=f"{acc:.4f}")
+                self.lbl_desc_m2.configure(text="Precision:")
+                self.lbl_val_m2.configure(text=f"{prec:.4f}")
+                self.lbl_desc_m3.configure(text="Recall:")
+                self.lbl_val_m3.configure(text=f"{rec:.4f}")
+
+                metric_title = f"{mn} // Acc={acc:.2f} // Prec={prec:.2f} // Rec={rec:.2f}"
+                log_msg = f"MODELO ENTRENADO: {mn} | Acc={acc:.4f} | Prec={prec:.4f} | Rec={rec:.4f}"
+            else:
+                mse, r2 = mean_squared_error(y_te, y_p), r2_score(y_te, y_p)
+
+                X_all, y_all = df_c[sx].values, df_c[tc].values
+                if needs_scaling:
+                    X_all_cv = StandardScaler().fit_transform(X_all)
+                else:
+                    X_all_cv = X_all
+                cv_model = ML_MODELS[mn]()
+                cv_scores = cross_val_score(cv_model, X_all_cv, y_all, cv=5, scoring="r2")
+                cv_mean = cv_scores.mean()
+
+                self.lbl_desc_m1.configure(text="MSE:")
+                self.lbl_val_m1.configure(text=f"{mse:.4f}")
+                self.lbl_desc_m2.configure(text="R²:")
+                self.lbl_val_m2.configure(text=f"{r2:.4f}")
+                self.lbl_desc_m3.configure(text="CV(5):")
+                self.lbl_val_m3.configure(text=f"{cv_mean:.4f} (±{cv_scores.std():.3f})")
+
+                metric_title = f"{mn} // R²={r2:.3f} // CV={cv_mean:.3f}"
+                log_msg = f"MODELO ENTRENADO: {mn} | MSE={mse:.4f} | R²={r2:.4f} | CV={cv_mean:.4f}"
+
+            # ── Chart Dinámico por modelo ──────────────────────────────────
             self.fig_ml.clear()
-            ax = self.fig_ml.add_subplot(111)
-            ax.set_facecolor(FO_BG)
-            self._style_ax_fallout(ax)
-            ax.scatter(y_te, y_p, c=FO_GREEN, edgecolors=FO_HOVER, alpha=0.85, s=45, label="Predicciones")
-            lims = [min(y_te.min(), y_p.min()), max(y_te.max(), y_p.max())]
-            ax.plot(lims, lims, "--", color="#ff3333", linewidth=1.5, alpha=0.7, label="Ideal (y=x)")
-            ax.set_xlabel("Valores Reales", color=FO_GREEN, fontsize=10, family=FO_FONT)
-            ax.set_ylabel("Predicciones", color=FO_GREEN, fontsize=10, family=FO_FONT)
-            ax.set_title(f"{mn} // R²={r2:.3f} // CV={cv_mean:.3f}",
-                         color=FO_GREEN, fontsize=12, weight="bold", family=FO_FONT)
-            ax.legend(fontsize=9, loc="upper left", facecolor=FO_BLACK, edgecolor=FO_GREEN, labelcolor=FO_GREEN)
-            self.fig_ml.tight_layout(); self.canvas_ml.draw()
+            self.fig_ml.patch.set_facecolor(FO_BLACK)
+
+            def _style(a):
+                """Aplica tema Fallout a cualquier Axes."""
+                a.set_facecolor(FO_BG)
+                a.tick_params(colors=FO_GREEN, which="both", labelsize=8)
+                for sp in a.spines.values():
+                    sp.set_color(FO_DIM)
+                a.grid(True, color="#0a1f0a", linestyle="--", linewidth=0.5, alpha=0.7)
+
+            # ── Regresión Lineal / SVM → Residual Plot + scatter Real vs Pred ──
+            if mn in ("Regresión Lineal", "SVM"):
+                ax_res  = self.fig_ml.add_subplot(121)
+                ax_scat = self.fig_ml.add_subplot(122)
+
+                # Panel izquierdo: Residual Plot
+                res = y_te - y_p
+                std_res = np.std(res)
+                _style(ax_res)
+                ax_res.scatter(y_p, res, c=FO_GREEN, edgecolors=FO_HOVER, alpha=0.75, s=40, zorder=3)
+                ax_res.axhline(0,         color="#ff3333", linestyle="--", linewidth=1.5, alpha=0.8, label="Error=0")
+                ax_res.axhline( std_res,  color="#ffaa00", linestyle=":",  linewidth=1.0, alpha=0.7, label=f"+1σ ({std_res:.1f})")
+                ax_res.axhline(-std_res,  color="#ffaa00", linestyle=":",  linewidth=1.0, alpha=0.7, label=f"-1σ")
+                ax_res.fill_between(ax_res.get_xlim(), -std_res, std_res, alpha=0.05, color=FO_GREEN)
+                ax_res.set_xlabel("Predicciones",           color=FO_GREEN, fontsize=9,  family=FO_FONT)
+                ax_res.set_ylabel("Residuo (Real − Pred)",  color=FO_GREEN, fontsize=9,  family=FO_FONT)
+                ax_res.set_title("// Residual Plot",        color=FO_GREEN, fontsize=9,  family=FO_FONT, weight="bold")
+                ax_res.legend(fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN)
+
+                # Panel derecho: Real vs Predicho
+                _style(ax_scat)
+                mn_val = min(y_te.min(), y_p.min()) - 2
+                mx_val = max(y_te.max(), y_p.max()) + 2
+                ax_scat.scatter(y_te, y_p, c=FO_GREEN, edgecolors=FO_HOVER, alpha=0.75, s=40, zorder=3, label="Predicciones")
+                ax_scat.plot([mn_val, mx_val], [mn_val, mx_val], "--", color="#ff3333", linewidth=1.5, label="Ideal (y=x)")
+                ax_scat.set_xlim(mn_val, mx_val); ax_scat.set_ylim(mn_val, mx_val)
+                ax_scat.set_xlabel("Valores Reales",   color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_scat.set_ylabel("Predicciones",     color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_scat.set_title("// Real vs Predicho", color=FO_GREEN, fontsize=9, family=FO_FONT, weight="bold")
+                ax_scat.legend(fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN)
+
+                self.fig_ml.suptitle(metric_title, color=FO_GREEN, fontsize=9, weight="bold", family=FO_FONT, y=1.01)
+
+            # ── Árbol / Random Forest → Importancia + Real vs Predicho ──
+            elif mn in ("Árbol de Decisión", "Random Forest"):
+                ax_imp  = self.fig_ml.add_subplot(121)
+                ax_scat = self.fig_ml.add_subplot(122)
+
+                # Panel izquierdo: Feature Importance
+                importances = model.feature_importances_
+                indices     = np.argsort(importances)
+                y_ticks     = np.arange(len(sx))
+                _style(ax_imp)
+                bars = ax_imp.barh(y_ticks, importances[indices],
+                                   color=FO_GREEN, edgecolor=FO_HOVER, alpha=0.85, height=0.6)
+                # Etiquetas de valor al lado de cada barra
+                for bar, val in zip(bars, importances[indices]):
+                    ax_imp.text(val + 0.004, bar.get_y() + bar.get_height() / 2,
+                                f"{val:.3f}", va="center", ha="left",
+                                color=FO_GREEN, fontsize=7, family=FO_FONT)
+                ax_imp.set_yticks(y_ticks)
+                ax_imp.set_yticklabels([sx[i] for i in indices], color=FO_GREEN, fontsize=8, family=FO_FONT)
+                ax_imp.set_xlabel("Importancia Relativa", color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_imp.set_title("// Importancia de Variables", color=FO_GREEN, fontsize=9, family=FO_FONT, weight="bold")
+                ax_imp.set_xlim(0, importances.max() * 1.25)
+
+                # Panel derecho: Real vs Predicho
+                _style(ax_scat)
+                mn_val = min(y_te.min(), y_p.min()) - 2
+                mx_val = max(y_te.max(), y_p.max()) + 2
+                ax_scat.scatter(y_te, y_p, c=FO_GREEN, edgecolors=FO_HOVER, alpha=0.75, s=40, zorder=3, label="Predicciones")
+                ax_scat.plot([mn_val, mx_val], [mn_val, mx_val], "--", color="#ff3333", linewidth=1.5, label="Ideal (y=x)")
+                ax_scat.set_xlim(mn_val, mx_val); ax_scat.set_ylim(mn_val, mx_val)
+                ax_scat.set_xlabel("Valores Reales",   color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_scat.set_ylabel("Predicciones",     color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_scat.set_title("// Real vs Predicho", color=FO_GREEN, fontsize=9, family=FO_FONT, weight="bold")
+                ax_scat.legend(fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN)
+
+                self.fig_ml.suptitle(metric_title, color=FO_GREEN, fontsize=9, weight="bold", family=FO_FONT, y=1.01)
+
+            # ── Regresión Logística → Matriz de Confusión ──
+            elif mn == "Regresión Logística":
+                ax = self.fig_ml.add_subplot(111)
+                ax.set_facecolor(FO_BG)
+                self.fig_ml.patch.set_facecolor(FO_BLACK)
+
+                cm_mat = confusion_matrix(y_te, y_p)
+                labels = ["Normal (0)", "Alto (1)"]
+
+                # Dibujar celdas manualmente con colores Fallout (evitar matshow en tema oscuro)
+                for i in range(2):
+                    for j in range(2):
+                        val = cm_mat[i, j]
+                        # TN/TP → verde brillante / FP/FN → rojo oscuro
+                        is_correct = (i == j)
+                        fill_color = "#0d6b06" if is_correct else "#4a0000"
+                        text_color = FO_GREEN  if is_correct else "#ff6666"
+                        rect = plt.Rectangle([j - 0.5, i - 0.5], 1, 1,
+                                             facecolor=fill_color, edgecolor=FO_DIM, linewidth=2)
+                        ax.add_patch(rect)
+                        # Número grande centrado
+                        ax.text(j, i, str(val), ha="center", va="center",
+                                color=text_color, fontsize=28, fontweight="bold", family=FO_FONT)
+                        # Etiqueta debajo del número
+                        cell_label = {(0,0):"TN", (0,1):"FP", (1,0):"FN", (1,1):"TP"}[(i,j)]
+                        ax.text(j, i + 0.3, cell_label, ha="center", va="center",
+                                color=text_color, fontsize=10, family=FO_FONT, alpha=0.7)
+
+                ax.set_xlim(-0.5, 1.5); ax.set_ylim(-0.5, 1.5)
+                ax.set_xticks([0, 1]); ax.set_yticks([0, 1])
+                ax.set_xticklabels(labels, color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax.set_yticklabels(labels, color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax.tick_params(colors=FO_GREEN)
+                for sp in ax.spines.values(): sp.set_color(FO_DIM)
+                ax.set_xlabel("PREDICCIÓN",  color=FO_GREEN, fontsize=10, family=FO_FONT, labelpad=8)
+                ax.set_ylabel("REAL",        color=FO_GREEN, fontsize=10, family=FO_FONT, labelpad=8)
+                ax.set_title(metric_title,   color=FO_GREEN, fontsize=9,  family=FO_FONT, weight="bold")
+                # Invertir eje Y para que TN quede arriba-izquierda (convención)
+                ax.invert_yaxis()
+
+            # ── KNN → Error vs K + Real vs Predicho ──
+            elif mn == "KNN":
+                ax_k    = self.fig_ml.add_subplot(121)
+                ax_scat = self.fig_ml.add_subplot(122)
+
+                # Panel izquierdo: Error MSE vs K
+                k_max = min(20, len(X_tr) - 1)
+                if k_max < 2: k_max = 2
+                k_vals  = list(range(1, k_max + 1))
+                errors  = []
+                for k in k_vals:
+                    _knn = KNeighborsRegressor(n_neighbors=k)
+                    _knn.fit(X_tr, y_tr)
+                    errors.append(mean_squared_error(y_te, _knn.predict(X_te)))
+
+                best_k   = k_vals[int(np.argmin(errors))]
+                best_err = min(errors)
+
+                _style(ax_k)
+                ax_k.plot(k_vals, errors, color=FO_GREEN, marker="o", linestyle="-",
+                          linewidth=1.8, markersize=5, markerfacecolor=FO_GREEN, zorder=3)
+                # Marcar el K óptimo
+                ax_k.axvline(best_k, color="#ff3333", linestyle="--", linewidth=1.5,
+                             label=f"K óptimo = {best_k}\nMSE = {best_err:.2f}", alpha=0.85)
+                ax_k.scatter([best_k], [best_err], color="#ff3333", s=80, zorder=5)
+                ax_k.set_xticks(k_vals[::max(1, k_max // 10)])
+                ax_k.set_xlabel("Número de Vecinos K",  color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_k.set_ylabel("Error (MSE en Test)",  color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_k.set_title("// Error vs K",         color=FO_GREEN, fontsize=9, family=FO_FONT, weight="bold")
+                ax_k.legend(fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN)
+
+                # Panel derecho: Real vs Predicho
+                _style(ax_scat)
+                mn_val = min(y_te.min(), y_p.min()) - 2
+                mx_val = max(y_te.max(), y_p.max()) + 2
+                ax_scat.scatter(y_te, y_p, c=FO_GREEN, edgecolors=FO_HOVER, alpha=0.75, s=40, zorder=3, label="Predicciones")
+                ax_scat.plot([mn_val, mx_val], [mn_val, mx_val], "--", color="#ff3333", linewidth=1.5, label="Ideal (y=x)")
+                ax_scat.set_xlim(mn_val, mx_val); ax_scat.set_ylim(mn_val, mx_val)
+                ax_scat.set_xlabel("Valores Reales",     color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_scat.set_ylabel("Predicciones",       color=FO_GREEN, fontsize=9, family=FO_FONT)
+                ax_scat.set_title("// Real vs Predicho", color=FO_GREEN, fontsize=9, family=FO_FONT, weight="bold")
+                ax_scat.legend(fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN)
+
+                self.fig_ml.suptitle(metric_title, color=FO_GREEN, fontsize=9, weight="bold", family=FO_FONT, y=1.01)
+
+            self.fig_ml.tight_layout()
+            self.canvas_ml.draw()
 
             self._populate_manual_inputs(sx)
-            self._log_to_console(f"MODELO ENTRENADO: {mn} | MSE={mse:.4f} | R²={r2:.4f} | CV(5)={cv_mean:.4f}")
-            logger.info(f"Modelo: {mn} | MSE={mse:.4f} | R²={r2:.4f} | CV={cv_mean:.4f}")
+            self._log_to_console(log_msg)
+            logger.info(log_msg)
         except Exception as e:
             logger.error(f"Error: {e}"); logger.error(traceback.format_exc())
             messagebox.showerror("Error", str(e))
@@ -965,8 +1192,14 @@ class RecompApp(ctk.CTk):
             if self.scaler_actual is not None:
                 X_pred = self.scaler_actual.transform(X_pred)
             pred = self.modelo_actual.predict(X_pred)[0]
-            self.lbl_prediction_result.configure(text=f"{pred:.2f}")
-            logger.info(f"Predicción: {dict(zip(self.columnas_x_entrenadas, vals))} → {pred:.2f}")
+
+            if hasattr(self.modelo_actual, "classes_"):
+                lbl_text = "Alto (1)" if pred == 1 else "Normal (0)"
+                self.lbl_prediction_result.configure(text=lbl_text)
+                logger.info(f"Predicción Logística: {dict(zip(self.columnas_x_entrenadas, vals))} → {lbl_text}")
+            else:
+                self.lbl_prediction_result.configure(text=f"{pred:.2f}")
+                logger.info(f"Predicción: {dict(zip(self.columnas_x_entrenadas, vals))} → {pred:.2f}")
         except Exception as e:
             logger.error(f"Error: {e}"); logger.error(traceback.format_exc())
             messagebox.showerror("Error", str(e))
