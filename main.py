@@ -15,13 +15,14 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
 
 # ─── Logging ─────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -58,6 +59,7 @@ class RecompApp(ctk.CTk):
         super().__init__()
         self.df: pd.DataFrame | None = None
         self.modelo_actual = None
+        self.scaler_actual: StandardScaler | None = None
         self.columnas_x_entrenadas: list[str] = []
         # Typewriter animation state
         self._is_typing = False
@@ -610,7 +612,7 @@ class RecompApp(ctk.CTk):
         self.opt_var_y.pack(padx=12, pady=(2, 8))
 
         self._fo_label(ctrl, "Tipo Grafico:", 10).pack(padx=12, anchor="w")
-        self.opt_chart_type = self._fo_option(ctrl, ["Dispersión (Scatter)", "Barras (Bar)", "Pastel (Pie)"], 220)
+        self.opt_chart_type = self._fo_option(ctrl, ["Dispersión (Scatter)", "Barras (Bar)", "Pastel (Pie)", "Línea (Line)"], 220)
         self.opt_chart_type.pack(padx=12, pady=(2, 15))
 
         self._fo_btn(ctrl, "> GENERAR GRAFICO", self._generate_chart,
@@ -687,6 +689,25 @@ class RecompApp(ctk.CTk):
                 ax.pie(pie.values, labels=pie.index.astype(str), autopct="%1.1f%%",
                        colors=greens[:len(pie)], textprops={"color": FO_GREEN, "fontsize": 9, "family": FO_FONT})
                 ax.set_title(f"{cy} por {cx} (Top 8)", color=FO_GREEN, fontsize=12, weight="bold", family=FO_FONT)
+
+            elif ct == "Línea (Line)":
+                if cy not in self.df.columns or not pd.api.types.is_numeric_dtype(self.df[cy]):
+                    messagebox.showerror("Error", f"'{cy}' no es numérica."); return
+                df_plot = self.df[[cx, cy]].dropna(subset=[cy])
+                ax.plot(range(len(df_plot)), df_plot[cy].values,
+                        color=FO_GREEN, linewidth=1.8, alpha=0.9, marker="o",
+                        markersize=3, markerfacecolor=FO_GREEN, markeredgecolor=FO_HOVER)
+                # Mostrar etiquetas del eje X cada N registros para legibilidad
+                n = len(df_plot)
+                step = max(1, n // 15)
+                tick_pos = list(range(0, n, step))
+                tick_labels = [str(df_plot[cx].iloc[i]) for i in tick_pos]
+                ax.set_xticks(tick_pos)
+                ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=7)
+                ax.set_xlabel(cx, color=FO_GREEN, fontsize=10, family=FO_FONT)
+                ax.set_ylabel(cy, color=FO_GREEN, fontsize=10, family=FO_FONT)
+                ax.set_title(f"{cy} por {cx} ({n} registros)",
+                             color=FO_GREEN, fontsize=12, weight="bold", family=FO_FONT)
 
             self.fig.tight_layout()
             self.canvas_widget.draw()
@@ -775,11 +796,25 @@ class RecompApp(ctk.CTk):
         self.lbl_mse.pack(side="left", padx=(8, 0))
 
         r2 = ctk.CTkFrame(met, fg_color="transparent")
-        r2.pack(fill="x", padx=10, pady=(2, 8))
+        r2.pack(fill="x", padx=10, pady=(2, 2))
         self._fo_label(r2, "R²:", 12).pack(side="left")
         self.lbl_r2 = ctk.CTkLabel(r2, text="---", text_color=FO_GREEN,
                                    font=ctk.CTkFont(family=FO_FONT, size=12))
         self.lbl_r2.pack(side="left", padx=(8, 0))
+
+        r3 = ctk.CTkFrame(met, fg_color="transparent")
+        r3.pack(fill="x", padx=10, pady=(2, 2))
+        self._fo_label(r3, "CV(5):", 12).pack(side="left")
+        self.lbl_cv = ctk.CTkLabel(r3, text="---", text_color=FO_GREEN,
+                                   font=ctk.CTkFont(family=FO_FONT, size=12))
+        self.lbl_cv.pack(side="left", padx=(8, 0))
+
+        r4 = ctk.CTkFrame(met, fg_color="transparent")
+        r4.pack(fill="x", padx=10, pady=(2, 8))
+        self._fo_label(r4, "Filas:", 12).pack(side="left")
+        self.lbl_rows_used = ctk.CTkLabel(r4, text="---", text_color=FO_GREEN,
+                                          font=ctk.CTkFont(family=FO_FONT, size=12))
+        self.lbl_rows_used.pack(side="left", padx=(8, 0))
 
         # ML Chart
         self.fig_ml = Figure(figsize=(5, 4), dpi=100, facecolor=FO_BLACK)
@@ -829,18 +864,55 @@ class RecompApp(ctk.CTk):
         if tc in sx:
             messagebox.showerror("CONFLICTO", f"'{tc}' no puede ser X y Y."); return
         try:
+            total_rows = self.df.shape[0]
             df_c = self.df[sx + [tc]].dropna()
-            if df_c.shape[0] < 10:
-                messagebox.showerror("DATOS INSUFICIENTES", f"Solo {df_c.shape[0]} filas válidas (min 10)."); return
+            rows_used = df_c.shape[0]
+            rows_dropped = total_rows - rows_used
+
+            if rows_used < 10:
+                messagebox.showerror("DATOS INSUFICIENTES", f"Solo {rows_used} filas válidas (min 10)."); return
+
+            # Hallazgo 2: Advertir si se eliminaron muchas filas por nulos
+            if rows_dropped > 0:
+                pct_dropped = (rows_dropped / total_rows) * 100
+                warn_msg = f"AVISO: {rows_dropped} filas eliminadas por nulos ({pct_dropped:.1f}%). Usando {rows_used}/{total_rows}."
+                self._log_to_console(warn_msg)
+                if pct_dropped > 20:
+                    self._log_to_console("ADVERTENCIA: >20% de datos descartados. Resultados poco confiables.")
+
             X, y = df_c[sx].values, df_c[tc].values
             X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+
+            # Hallazgo 1: StandardScaler para modelos sensibles a escala
+            needs_scaling = mn in ("SVM", "KNN")
+            if needs_scaling:
+                scaler = StandardScaler()
+                X_tr = scaler.fit_transform(X_tr)
+                X_te = scaler.transform(X_te)
+                self.scaler_actual = scaler
+                self._log_to_console(f"SCALER aplicado (StandardScaler) — modelo {mn} requiere normalización.")
+            else:
+                self.scaler_actual = None
+
             model = ML_MODELS[mn](); model.fit(X_tr, y_tr)
             y_p = model.predict(X_te)
             mse, r2 = mean_squared_error(y_te, y_p), r2_score(y_te, y_p)
 
+            # Hallazgo 6: Cross-validation (5-fold)
+            X_all, y_all = df_c[sx].values, df_c[tc].values
+            if needs_scaling:
+                X_all_cv = StandardScaler().fit_transform(X_all)
+            else:
+                X_all_cv = X_all
+            cv_model = ML_MODELS[mn]()
+            cv_scores = cross_val_score(cv_model, X_all_cv, y_all, cv=5, scoring="r2")
+            cv_mean = cv_scores.mean()
+
             self.modelo_actual = model; self.columnas_x_entrenadas = sx
             self.lbl_mse.configure(text=f"{mse:.4f}")
             self.lbl_r2.configure(text=f"{r2:.4f}")
+            self.lbl_cv.configure(text=f"{cv_mean:.4f} (±{cv_scores.std():.3f})")
+            self.lbl_rows_used.configure(text=f"{rows_used}/{total_rows}")
 
             # Chart
             self.fig_ml.clear()
@@ -852,12 +924,14 @@ class RecompApp(ctk.CTk):
             ax.plot(lims, lims, "--", color="#ff3333", linewidth=1.5, alpha=0.7, label="Ideal (y=x)")
             ax.set_xlabel("Valores Reales", color=FO_GREEN, fontsize=10, family=FO_FONT)
             ax.set_ylabel("Predicciones", color=FO_GREEN, fontsize=10, family=FO_FONT)
-            ax.set_title(f"{mn} // R²={r2:.3f}", color=FO_GREEN, fontsize=12, weight="bold", family=FO_FONT)
+            ax.set_title(f"{mn} // R²={r2:.3f} // CV={cv_mean:.3f}",
+                         color=FO_GREEN, fontsize=12, weight="bold", family=FO_FONT)
             ax.legend(fontsize=9, loc="upper left", facecolor=FO_BLACK, edgecolor=FO_GREEN, labelcolor=FO_GREEN)
             self.fig_ml.tight_layout(); self.canvas_ml.draw()
 
             self._populate_manual_inputs(sx)
-            logger.info(f"Modelo: {mn} | MSE={mse:.4f} | R²={r2:.4f}")
+            self._log_to_console(f"MODELO ENTRENADO: {mn} | MSE={mse:.4f} | R²={r2:.4f} | CV(5)={cv_mean:.4f}")
+            logger.info(f"Modelo: {mn} | MSE={mse:.4f} | R²={r2:.4f} | CV={cv_mean:.4f}")
         except Exception as e:
             logger.error(f"Error: {e}"); logger.error(traceback.format_exc())
             messagebox.showerror("Error", str(e))
@@ -887,7 +961,10 @@ class RecompApp(ctk.CTk):
                     vals.append(float(raw))
                 except ValueError:
                     messagebox.showerror("VALOR INVÁLIDO", f"'{raw}' no es numérico para '{col}'."); return
-            pred = self.modelo_actual.predict(np.array([vals]))[0]
+            X_pred = np.array([vals])
+            if self.scaler_actual is not None:
+                X_pred = self.scaler_actual.transform(X_pred)
+            pred = self.modelo_actual.predict(X_pred)[0]
             self.lbl_prediction_result.configure(text=f"{pred:.2f}")
             logger.info(f"Predicción: {dict(zip(self.columnas_x_entrenadas, vals))} → {pred:.2f}")
         except Exception as e:
