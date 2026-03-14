@@ -1310,8 +1310,8 @@ class RecompApp(ctk.CTk):
                     sp.set_color(FO_DIM)
                 a.grid(True, color="#0a1f0a", linestyle="--", linewidth=0.5, alpha=0.7)
 
-            # ── Regresión Lineal / SVM → Residual Plot + scatter Real vs Pred ──
-            if mn in ("Regresión Lineal", "SVM"):
+            # ── Regresión Lineal → Residual Plot + scatter Real vs Pred ──
+            if mn == "Regresión Lineal":
                 ax_res = self.fig_ml.add_subplot(121)
                 ax_scat = self.fig_ml.add_subplot(122)
 
@@ -1422,8 +1422,123 @@ class RecompApp(ctk.CTk):
                     y=1.01,
                 )
 
-            # ── Árbol / Random Forest → Importancia + Real vs Predicho ──
-            elif mn in ("Árbol de Decisión", "Random Forest"):
+            # ── SVM → Histograma de Residuos + Real vs Predicho ──
+            elif mn == "SVM":
+                ax_hist = self.fig_ml.add_subplot(121)
+                ax_scat = self.fig_ml.add_subplot(122)
+
+                res = y_te - y_p
+                std_res = np.std(res)
+                mean_res = np.mean(res)
+
+                # Panel izquierdo: Histograma de Residuos
+                _style(ax_hist)
+                n_bins = max(10, min(30, len(res) // 3))
+                counts, bin_edges, patches = ax_hist.hist(
+                    res,
+                    bins=n_bins,
+                    color=FO_GREEN,
+                    edgecolor=FO_HOVER,
+                    alpha=0.80,
+                    density=True,
+                )
+                # Curva normal superpuesta
+                from scipy.stats import norm as _norm
+                x_norm = np.linspace(res.min() - 1, res.max() + 1, 200)
+                ax_hist.plot(
+                    x_norm,
+                    _norm.pdf(x_norm, mean_res, std_res),
+                    color="#ff3333",
+                    linewidth=1.8,
+                    linestyle="--",
+                    label=f"Normal (μ={mean_res:.2f}, σ={std_res:.2f})",
+                )
+                ax_hist.axvline(
+                    0,
+                    color="#ffaa00",
+                    linestyle=":",
+                    linewidth=1.5,
+                    alpha=0.8,
+                    label="Error = 0",
+                )
+                ax_hist.set_xlabel(
+                    "Residuo (Real − Pred)", color=FO_GREEN, fontsize=9, family=FO_FONT
+                )
+                ax_hist.set_ylabel(
+                    "Densidad", color=FO_GREEN, fontsize=9, family=FO_FONT
+                )
+                ax_hist.set_title(
+                    "// Distribución de Residuos",
+                    color=FO_GREEN,
+                    fontsize=9,
+                    family=FO_FONT,
+                    weight="bold",
+                )
+                ax_hist.legend(
+                    fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN
+                )
+
+                # Panel derecho: Real vs Predicho
+                _style(ax_scat)
+                mn_val = min(y_te.min(), y_p.min()) - 2
+                mx_val = max(y_te.max(), y_p.max()) + 2
+                ax_scat.scatter(
+                    y_te,
+                    y_p,
+                    c=FO_GREEN,
+                    edgecolors=FO_HOVER,
+                    alpha=0.75,
+                    s=40,
+                    zorder=3,
+                    label="Predicciones",
+                )
+                ax_scat.plot(
+                    [mn_val, mx_val],
+                    [mn_val, mx_val],
+                    "--",
+                    color="#ff3333",
+                    linewidth=1.5,
+                    label="Ideal (y=x)",
+                )
+                # Banda de ±1σ alrededor de la ideal
+                ax_scat.fill_between(
+                    [mn_val, mx_val],
+                    [mn_val - std_res, mx_val - std_res],
+                    [mn_val + std_res, mx_val + std_res],
+                    alpha=0.08,
+                    color=FO_GREEN,
+                    label=f"±1σ ({std_res:.1f})",
+                )
+                ax_scat.set_xlim(mn_val, mx_val)
+                ax_scat.set_ylim(mn_val, mx_val)
+                ax_scat.set_xlabel(
+                    "Valores Reales", color=FO_GREEN, fontsize=9, family=FO_FONT
+                )
+                ax_scat.set_ylabel(
+                    "Predicciones", color=FO_GREEN, fontsize=9, family=FO_FONT
+                )
+                ax_scat.set_title(
+                    "// Real vs Predicho",
+                    color=FO_GREEN,
+                    fontsize=9,
+                    family=FO_FONT,
+                    weight="bold",
+                )
+                ax_scat.legend(
+                    fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN
+                )
+
+                self.fig_ml.suptitle(
+                    metric_title,
+                    color=FO_GREEN,
+                    fontsize=9,
+                    weight="bold",
+                    family=FO_FONT,
+                    y=1.01,
+                )
+
+            # ── Árbol de Decisión → Importancia + Real vs Predicho ──
+            elif mn == "Árbol de Decisión":
                 ax_imp = self.fig_ml.add_subplot(121)
                 ax_scat = self.fig_ml.add_subplot(122)
 
@@ -1440,7 +1555,6 @@ class RecompApp(ctk.CTk):
                     alpha=0.85,
                     height=0.6,
                 )
-                # Etiquetas de valor al lado de cada barra
                 for bar, val in zip(bars, importances[indices]):
                     ax_imp.text(
                         val + 0.004,
@@ -1506,6 +1620,129 @@ class RecompApp(ctk.CTk):
                     weight="bold",
                 )
                 ax_scat.legend(
+                    fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN
+                )
+
+                self.fig_ml.suptitle(
+                    metric_title,
+                    color=FO_GREEN,
+                    fontsize=9,
+                    weight="bold",
+                    family=FO_FONT,
+                    y=1.01,
+                )
+
+            # ── Random Forest → Importancia + Curva de Error vs N_Estimadores ──
+            elif mn == "Random Forest":
+                ax_imp = self.fig_ml.add_subplot(121)
+                ax_err = self.fig_ml.add_subplot(122)
+
+                # Panel izquierdo: Feature Importance
+                importances = model.feature_importances_
+                indices = np.argsort(importances)
+                y_ticks = np.arange(len(sx))
+                _style(ax_imp)
+                bars = ax_imp.barh(
+                    y_ticks,
+                    importances[indices],
+                    color=FO_GREEN,
+                    edgecolor=FO_HOVER,
+                    alpha=0.85,
+                    height=0.6,
+                )
+                for bar, val in zip(bars, importances[indices]):
+                    ax_imp.text(
+                        val + 0.004,
+                        bar.get_y() + bar.get_height() / 2,
+                        f"{val:.3f}",
+                        va="center",
+                        ha="left",
+                        color=FO_GREEN,
+                        fontsize=7,
+                        family=FO_FONT,
+                    )
+                ax_imp.set_yticks(y_ticks)
+                ax_imp.set_yticklabels(
+                    [sx[i] for i in indices], color=FO_GREEN, fontsize=8, family=FO_FONT
+                )
+                ax_imp.set_xlabel(
+                    "Importancia Relativa", color=FO_GREEN, fontsize=9, family=FO_FONT
+                )
+                ax_imp.set_title(
+                    "// Importancia de Variables",
+                    color=FO_GREEN,
+                    fontsize=9,
+                    family=FO_FONT,
+                    weight="bold",
+                )
+                ax_imp.set_xlim(0, importances.max() * 1.25)
+
+                # Panel derecho: Error vs N° de Estimadores (convergencia del ensemble)
+                _style(ax_err)
+                n_total = model.n_estimators
+                # Calcular MSE acumulado usando los primeros i árboles
+                n_steps = min(n_total, 50)
+                step_size = max(1, n_total // n_steps)
+                n_list = list(range(step_size, n_total + 1, step_size))
+                if n_list[-1] != n_total:
+                    n_list.append(n_total)
+                train_errs, test_errs = [], []
+                import warnings as _w
+                with _w.catch_warnings():
+                    _w.simplefilter("ignore")
+                    for n in n_list:
+                        _rf_tmp = RandomForestRegressor(
+                            n_estimators=n, random_state=42
+                        )
+                        _rf_tmp.fit(X_tr, y_tr)
+                        train_errs.append(
+                            mean_squared_error(y_tr, _rf_tmp.predict(X_tr))
+                        )
+                        test_errs.append(
+                            mean_squared_error(y_te, _rf_tmp.predict(X_te))
+                        )
+                ax_err.plot(
+                    n_list,
+                    train_errs,
+                    color=FO_GREEN,
+                    linewidth=1.8,
+                    linestyle="-",
+                    label="Train MSE",
+                    alpha=0.9,
+                )
+                ax_err.plot(
+                    n_list,
+                    test_errs,
+                    color="#ff3333",
+                    linewidth=1.8,
+                    linestyle="--",
+                    label="Test MSE",
+                    alpha=0.9,
+                )
+                best_n = n_list[int(np.argmin(test_errs))]
+                best_err_rf = min(test_errs)
+                ax_err.axvline(
+                    best_n,
+                    color="#ffaa00",
+                    linestyle=":",
+                    linewidth=1.2,
+                    alpha=0.8,
+                    label=f"Mejor n={best_n} (MSE={best_err_rf:.2f})",
+                )
+                ax_err.set_xlabel(
+                    "N° de Estimadores", color=FO_GREEN, fontsize=9, family=FO_FONT
+                )
+                ax_err.set_ylabel(
+                    "MSE", color=FO_GREEN, fontsize=9, family=FO_FONT
+                )
+                ax_err.set_title(
+                    "// Convergencia del Ensemble",
+                    color=FO_GREEN,
+                    fontsize=9,
+                    family=FO_FONT,
+                    weight="bold",
+                )
+                ax_err.legend(
                     fontsize=7, facecolor=FO_BG, edgecolor=FO_DIM, labelcolor=FO_GREEN
                 )
 
