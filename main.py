@@ -1444,6 +1444,7 @@ class RecompApp(ctk.CTk):
                 )
                 # Curva normal superpuesta
                 from scipy.stats import norm as _norm
+
                 x_norm = np.linspace(res.min() - 1, res.max() + 1, 200)
                 ax_hist.plot(
                     x_norm,
@@ -1688,12 +1689,11 @@ class RecompApp(ctk.CTk):
                     n_list.append(n_total)
                 train_errs, test_errs = [], []
                 import warnings as _w
+
                 with _w.catch_warnings():
                     _w.simplefilter("ignore")
                     for n in n_list:
-                        _rf_tmp = RandomForestRegressor(
-                            n_estimators=n, random_state=42
-                        )
+                        _rf_tmp = RandomForestRegressor(n_estimators=n, random_state=42)
                         _rf_tmp.fit(X_tr, y_tr)
                         train_errs.append(
                             mean_squared_error(y_tr, _rf_tmp.predict(X_tr))
@@ -1732,9 +1732,7 @@ class RecompApp(ctk.CTk):
                 ax_err.set_xlabel(
                     "N° de Estimadores", color=FO_GREEN, fontsize=9, family=FO_FONT
                 )
-                ax_err.set_ylabel(
-                    "MSE", color=FO_GREEN, fontsize=9, family=FO_FONT
-                )
+                ax_err.set_ylabel("MSE", color=FO_GREEN, fontsize=9, family=FO_FONT)
                 ax_err.set_title(
                     "// Convergencia del Ensemble",
                     color=FO_GREEN,
